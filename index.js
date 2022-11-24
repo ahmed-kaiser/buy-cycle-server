@@ -12,6 +12,16 @@ const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@clu
 const client = new MongoClient(uri, { useNewUrlParser: true, useUnifiedTopology: true, serverApi: ServerApiVersion.v1 });
 
 const run = async() => {
+    const userCollections = client.db('BuyCycle').collection('users');
+
+    // add new user data to database
+    app.post('/users', async(req, res) => {
+        const user = await userCollections.findOne({email:req.body.email});
+        if(!user) {
+            const result = await userCollections.insertOne(req.body);
+            res.send(result);
+        }
+    });
 
 };
 
