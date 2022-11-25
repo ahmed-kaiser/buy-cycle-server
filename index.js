@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 require('dotenv').config();
 const app = express();
 const port = process.env.POST || 5000;
@@ -13,6 +13,9 @@ const client = new MongoClient(uri, { useNewUrlParser: true, useUnifiedTopology:
 
 const run = async() => {
     const userCollections = client.db('BuyCycle').collection('users');
+    const categoriesCollections = client.db('BuyCycle').collection('categories');
+    const productsCollections = client.db('BuyCycle').collection('products');
+
 
     // add new user data to database
     app.post('/users', async(req, res) => {
@@ -21,6 +24,28 @@ const run = async() => {
             const result = await userCollections.insertOne(req.body);
             res.send(result);
         }
+    });
+
+    app.get('/categories', async(req, res) => {
+        const categories = await categoriesCollections.find().toArray();
+        res.send(categories);
+    });
+
+    app.post('/products', async(req, res) => {
+        const result = await productsCollections.insertOne(req.body);
+        res.send(result);
+    });
+
+    app.get('/products', async(req, res) => {
+        const query = { ownerEmail: req.query.email }
+        const products = await productsCollections.find(query).toArray();
+        res.send(products);
+    });
+
+    app.delete('/products', async(req, res) => {
+        const query = { _id: ObjectId(req.query.id) };
+        const result = await productsCollections.deleteOne(query);
+        res.send(result);
     });
 
 };
