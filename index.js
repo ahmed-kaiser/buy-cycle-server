@@ -50,6 +50,17 @@ const run = async () => {
     }
   };
 
+  const verifyAdminAccount = async (req, res, next) => {
+    const email = req.query?.email;
+    const admin = await userCollections.findOne({ email: email });
+    if (admin.role !== "admin") {
+      res.status(403).send("Forbidden");
+    } else {
+      next();
+    }
+  };
+
+
   // api for add new user to user collection
   app.post("/users", async (req, res) => {
     const user = await userCollections.findOne({ email: req.body.email });
@@ -65,6 +76,13 @@ const run = async () => {
     const result = await userCollections.findOne(filter);
     const {role} = result;
     res.send({role});
+  });
+
+  // api for getting seller or buyer account from users collection
+  app.get('/all-users', verifyToken, verifyAdminAccount, async(req, res) => {
+    const filter = { role: req.query.role };
+    const users = await userCollections.find(filter).toArray();
+    res.send(users); 
   });
 
   // api for getting all categories from categories collection
