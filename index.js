@@ -85,6 +85,12 @@ const run = async () => {
     res.send(users); 
   });
 
+  // api for delete a user
+  app.delete('/users/:id', verifyToken, verifyAdminAccount, async(req, res) => {
+    const result = await userCollections.deleteOne({ _id: ObjectId(req.params.id) });
+    res.send(result);
+  });
+
   // api for getting all categories from categories collection
   app.get("/categories", async (req, res) => {
     const categories = await categoriesCollections.find().toArray();
@@ -162,21 +168,40 @@ const run = async () => {
 
   // api for create a booking on booking collection
   app.post('/bookings', verifyToken, async(req, res) => {
-     const result = await bookingsCollections.insertOne(req.body);
-    //  const filter = { _id: ObjectId(req.body.productId)};
-    //  const updateDoc = {
-    //     $set:{
-    //         available:false
-    //     }
-    //  }
-    //  await productsCollections.updateOne(filter, updateDoc);
-     res.send(result);
+     const filter = { buyerEmail: req.body.buyerEmail, productId: req.body.productId };
+     const booking = await bookingsCollections.findOne(filter);
+     if(!booking) {
+       const result = await bookingsCollections.insertOne(req.body);
+       res.send(result);
+     }
   });
 
   // api for getting booking information for seller
   app.get('/bookings/seller', verifyToken, verifySellerAccount, async(req, res) => {
       const result = await bookingsCollections.find({ sellerEmail:req.query.email }).toArray()
       res.send(result);
+  });
+
+  // api for getting booking information for seller
+  app.get('/bookings', verifyToken, async(req, res) => {
+    const result = await bookingsCollections.aggregate([
+      {
+        $match: { buyerEmail: req.query.email }
+      },
+      {
+        $set: {productId: {$toObjectId: "$productId"}}
+      },
+      {
+        $lookup: {
+          from: 'products',
+          localField: 'productId',
+          foreignField: '_id',
+          pipeline: [{ $project:{ image:1, selling_price:1 }}],
+          as: 'productDetails'
+        }
+      }
+    ]).toArray();
+    res.send(result);
   });
 
   // api for get advertise data from advertise and products collection
