@@ -3,6 +3,7 @@ const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 require("dotenv").config();
+const stripe = require("stripe")(process.env.STRIPE_SECRET);
 const app = express();
 const port = process.env.POST || 5000;
 
@@ -40,6 +41,7 @@ const run = async () => {
   const bookingsCollections = client.db("BuyCycle").collection("bookings");
   const advertiseCollection = client.db("BuyCycle").collection("advertise");
   const reportCollection = client.db("BuyCycle").collection("report");
+  const paymentsCollection = client.db("BuyCycle").collection("payments");
 
   const verifySellerAccount = async (req, res, next) => {
     const email = req.query?.email;
@@ -61,7 +63,6 @@ const run = async () => {
     }
   };
 
-
   // api for add new user to user collection
   app.post("/users", async (req, res) => {
     const user = await userCollections.findOne({ email: req.body.email });
@@ -73,23 +74,44 @@ const run = async () => {
 
   // api for getting user from user collection
   app.get("/users", async (req, res) => {
-    const filter = {email:req.query.email};
+    const filter = { email: req.query.email };
     const result = await userCollections.findOne(filter);
     res.send(result);
   });
 
+  // api for seller verification
+  app.patch("/users/:id", verifyToken, verifyAdminAccount, async (req, res) => {
+    const filter = { _id: ObjectId(req.params.id) };
+    const updateDoc = [
+      {
+        $set: {
+          verified: { $not: "$verified" },
+        },
+      },
+    ];
+    const result = await userCollections.findOneAndUpdate(filter, updateDoc);
+    res.send(result);
+  });
+
   // api for getting seller or buyer account from users collection
-  app.get('/all-users', verifyToken, verifyAdminAccount, async(req, res) => {
+  app.get("/all-users", verifyToken, verifyAdminAccount, async (req, res) => {
     const filter = { role: req.query.role };
     const users = await userCollections.find(filter).toArray();
-    res.send(users); 
+    res.send(users);
   });
 
   // api for delete a user
-  app.delete('/users/:id', verifyToken, verifyAdminAccount, async(req, res) => {
-    const result = await userCollections.deleteOne({ _id: ObjectId(req.params.id) });
-    res.send(result);
-  });
+  app.delete(
+    "/users/:id",
+    verifyToken,
+    verifyAdminAccount,
+    async (req, res) => {
+      const result = await userCollections.deleteOne({
+        _id: ObjectId(req.params.id),
+      });
+      res.send(result);
+    }
+  );
 
   // api for getting all categories from categories collection
   app.get("/categories", async (req, res) => {
@@ -106,36 +128,38 @@ const run = async () => {
   // api for getting product from product collection based on seller
   app.get("/products", verifyToken, verifySellerAccount, async (req, res) => {
     const query = { sellerEmail: req.query.email };
-    const products = await productsCollections.aggregate([
-      {
-        $match: query
-      },
-      {
-        $set: {_id: {$toString: "$_id"}}
-      },
-      {
-        $lookup: {
-          from: 'advertise',
-          localField: '_id',
-          foreignField: 'productId',
-          pipeline: [ { $project: { _id: 1} } ],
-          as: 'advertise'
-        }
-      },
-      {
-        $set: {
-          advertise: {
-            $arrayElemAt:["$advertise", 0]
-          }
-        }
-      }
-    ]).toArray();
+    const products = await productsCollections
+      .aggregate([
+        {
+          $match: query,
+        },
+        {
+          $set: { _id: { $toString: "$_id" } },
+        },
+        {
+          $lookup: {
+            from: "advertise",
+            localField: "_id",
+            foreignField: "productId",
+            pipeline: [{ $project: { _id: 1 } }],
+            as: "advertise",
+          },
+        },
+        {
+          $set: {
+            advertise: {
+              $arrayElemAt: ["$advertise", 0],
+            },
+          },
+        },
+      ])
+      .toArray();
     res.send(products);
   });
 
   // api for getting product from product collection based on categories
   app.get("/products/:id", verifyToken, async (req, res) => {
-    const query = { categoryId: req.params.id };
+    const query = { categoryId: req.params.id, available: true };
     const products = await productsCollections
       .aggregate([
         {
@@ -148,7 +172,7 @@ const run = async () => {
             foreignField: "email",
             as: "sellerDetails",
           },
-        }
+        },
       ])
       .toArray();
     res.send(products);
@@ -162,159 +186,238 @@ const run = async () => {
     async (req, res) => {
       const id = req.query.id;
       await bookingsCollections.deleteOne({ productId: id });
-      await advertiseCollection.deleteOne({ productId: id })
+      await advertiseCollection.deleteOne({ productId: id });
       const result = await productsCollections.deleteOne({ _id: ObjectId(id) });
       res.send(result);
     }
   );
 
   // api for create a booking on booking collection
-  app.post('/bookings', verifyToken, async(req, res) => {
-     const filter = { buyerEmail: req.body.buyerEmail, productId: req.body.productId };
-     const booking = await bookingsCollections.findOne(filter);
-     if(!booking) {
-       const result = await bookingsCollections.insertOne(req.body);
-       res.send(result);
-     }
+  app.post("/bookings", verifyToken, async (req, res) => {
+    const filter = {
+      buyerEmail: req.body.buyerEmail,
+      productId: req.body.productId,
+    };
+    const booking = await bookingsCollections.findOne(filter);
+    if (!booking) {
+      const result = await bookingsCollections.insertOne(req.body);
+      res.send(result);
+    }
   });
 
   // api for getting booking information for seller
-  app.get('/bookings/seller', verifyToken, verifySellerAccount, async(req, res) => {
-      const result = await bookingsCollections.find({ sellerEmail:req.query.email }).toArray()
+  app.get(
+    "/bookings/seller",
+    verifyToken,
+    verifySellerAccount,
+    async (req, res) => {
+      const result = await bookingsCollections
+        .find({ sellerEmail: req.query.email })
+        .toArray();
       res.send(result);
-  });
+    }
+  );
 
   // api for getting booking information for buyer
-  app.get('/bookings', verifyToken, async(req, res) => {
-    const result = await bookingsCollections.aggregate([
-      {
-        $match: { buyerEmail: req.query.email }
-      },
-      {
-        $set: {productId: {$toObjectId: "$productId"}}
-      },
-      {
-        $lookup: {
-          from: 'products',
-          localField: 'productId',
-          foreignField: '_id',
-          pipeline: [{ $project:{ image:1, selling_price:1 }}],
-          as: 'productDetails'
-        }
-      }
-    ]).toArray();
+  app.get("/bookings", verifyToken, async (req, res) => {
+    const result = await bookingsCollections
+      .aggregate([
+        {
+          $match: { buyerEmail: req.query.email },
+        },
+        {
+          $set: { productId: { $toObjectId: "$productId" } },
+        },
+        {
+          $lookup: {
+            from: "products",
+            localField: "productId",
+            foreignField: "_id",
+            pipeline: [{ $project: { image: 1, selling_price: 1 } }],
+            as: "productDetails",
+          },
+        },
+      ])
+      .toArray();
     res.send(result);
   });
 
+  // api for getting specific booking information
+  app.get("/bookings/:id", verifyToken, async (req, res) => {
+    const booking = await bookingsCollections.findOne({
+      _id: ObjectId(req.params.id),
+    });
+    res.send(booking);
+  });
+
   // api for get advertise data from advertise and products collection
-  app.get('/advertise', async(req, res) => {
-    const advertise = await advertiseCollection.aggregate([
-      {
-        $set: {productId: {$toObjectId: "$productId"}}
-      },
-      {
-        $lookup: {
-          from: 'products',
-          localField: 'productId',
-          foreignField: '_id',
-          pipeline: [{$project: { title: 1, image: 1, selling_price: 1, city: 1, area: 1 }}],
-          as: 'productDetails'
-        }
-      },
-      {
-        $set: {
-          productDetails: {
-            $arrayElemAt:["$productDetails", 0]
-          }
-        }
-      }
-    ]).toArray();
+  app.get("/advertise", async (req, res) => {
+    const advertise = await advertiseCollection
+      .aggregate([
+        {
+          $set: { productId: { $toObjectId: "$productId" } },
+        },
+        {
+          $lookup: {
+            from: "products",
+            localField: "productId",
+            foreignField: "_id",
+            pipeline: [
+              {
+                $project: {
+                  title: 1,
+                  image: 1,
+                  selling_price: 1,
+                  city: 1,
+                  area: 1,
+                },
+              },
+            ],
+            as: "productDetails",
+          },
+        },
+        {
+          $set: {
+            productDetails: {
+              $arrayElemAt: ["$productDetails", 0],
+            },
+          },
+        },
+      ])
+      .toArray();
     res.send(advertise);
   });
 
   // api for add advertise data to advertise collection
-  app.post('/advertise', verifyToken, verifySellerAccount, async(req, res) => {
+  app.post("/advertise", verifyToken, verifySellerAccount, async (req, res) => {
     const result = await advertiseCollection.insertOne(req.body);
     res.send(result);
   });
 
   // api for delete advertise data from advertise collection
-  app.delete('/advertise/:id', verifyToken, verifySellerAccount, async(req, res) => {
-    const result = await advertiseCollection.deleteOne({ productId: req.params.id});
-    res.send(result);
-  });
+  app.delete(
+    "/advertise/:id",
+    verifyToken,
+    verifySellerAccount,
+    async (req, res) => {
+      const result = await advertiseCollection.deleteOne({
+        productId: req.params.id,
+      });
+      res.send(result);
+    }
+  );
 
   // api for add product to wishlist to uses collection
-  app.patch('/wishlist/:id', verifyToken, async(req, res) => {
-    const result = await userCollections.updateOne({ email: req.query.email }, { $addToSet: {wishlist: req.params.id }} );
+  app.patch("/wishlist/:id", verifyToken, async (req, res) => {
+    const result = await userCollections.updateOne(
+      { email: req.query.email },
+      { $addToSet: { wishlist: req.params.id } }
+    );
     res.send(result);
   });
 
   // api for delete product from wishlist of uses collection
-  app.delete('/wishlist/:id', verifyToken, async(req, res) => {
-    const result = await userCollections.updateOne({ email: req.query.email }, { $pull: {wishlist: req.params.id }} );
+  app.delete("/wishlist/:id", verifyToken, async (req, res) => {
+    const result = await userCollections.updateOne(
+      { email: req.query.email },
+      { $pull: { wishlist: req.params.id } }
+    );
     res.send(result);
   });
 
-  // api for getting wishlist product details 
-  app.get('/wishlist', verifyToken, async(req, res) => {
-    const wishlist = await userCollections.aggregate([
-      {
-        $match: { email: req.query.email },
-      },
-      {
-        $project: { wishlist: 1, _id: 0}
-      },
-      {
-        $unwind: "$wishlist"
-      },
-      {
-        $set: {pid: {$toObjectId: "$wishlist"}}
-      },
-      {
-        $lookup: {
-          from: 'products',
-          localField: 'pid',
-          foreignField: '_id',
-          as: 'productDetails'
-        }
-      },
-      {
-        $set: {
-          details: {
-            $arrayElemAt:["$productDetails", 0]
-          }
-        }
-      },
-      {
-        $project: {
-          details: 1
-        }
-      }
-      
-    ]).toArray()
+  // api for getting wishlist product details
+  app.get("/wishlist", verifyToken, async (req, res) => {
+    const wishlist = await userCollections
+      .aggregate([
+        {
+          $match: { email: req.query.email },
+        },
+        {
+          $project: { wishlist: 1, _id: 0 },
+        },
+        {
+          $unwind: "$wishlist",
+        },
+        {
+          $set: { pid: { $toObjectId: "$wishlist" } },
+        },
+        {
+          $lookup: {
+            from: "products",
+            localField: "pid",
+            foreignField: "_id",
+            as: "productDetails",
+          },
+        },
+        {
+          $set: {
+            details: {
+              $arrayElemAt: ["$productDetails", 0],
+            },
+          },
+        },
+        {
+          $project: {
+            details: 1,
+          },
+        },
+      ])
+      .toArray();
     res.send(wishlist);
   });
 
   // api for post a report
-  app.post('/report', verifyToken, async(req, res) => {
+  app.post("/report", verifyToken, async (req, res) => {
     const result = await reportCollection.insertOne(req.body);
     res.send(result);
   });
 
   // api for getting report information
-  app.get('/report', verifyToken, verifyAdminAccount, async(req, res) => {
+  app.get("/report", verifyToken, verifyAdminAccount, async (req, res) => {
     const report = await reportCollection.find({}).toArray();
     res.send(report);
   });
 
   // api for deleting a report
-  app.delete('/report/:id', verifyToken, verifyAdminAccount, async(req, res) => {
-    const report = await reportCollection.deleteOne({_id: ObjectId(req.params.id)});
-    res.send(report);
+  app.delete(
+    "/report/:id",
+    verifyToken,
+    verifyAdminAccount,
+    async (req, res) => {
+      const report = await reportCollection.deleteOne({
+        _id: ObjectId(req.params.id),
+      });
+      res.send(report);
+    }
+  );
+
+  // api for payment
+  app.post("/create-payment-intent", verifyToken, async (req, res) => {
+    const { price } = req.body;
+    const amount = price * 1000;
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: amount,
+      currency: "usd",
+      payment_method_types: ["card"],
+    });
+
+    res.send({
+      clientSecret: paymentIntent.client_secret,
+    });
   });
 
-
+  // api for add payment detail and update collections
+  app.post("/payments", verifyToken, async (req, res) => {
+    const result = await paymentsCollection.insertOne(req.body);
+    await bookingsCollections.updateOne(
+      { _id: ObjectId(req.body.bookingId) },
+      { $set: { paid: true } }
+    );
+    await productsCollections.updateOne({ _id: ObjectId(req.body.productId) },
+    { $set: { available: false } });
+    await advertiseCollection.deleteOne({ productId: req.body.productId });
+    res.send(result);
+  });
 };
 
 run().catch((err) => console.log(err));
