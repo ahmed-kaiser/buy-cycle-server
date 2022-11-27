@@ -39,6 +39,7 @@ const run = async () => {
   const productsCollections = client.db("BuyCycle").collection("products");
   const bookingsCollections = client.db("BuyCycle").collection("bookings");
   const advertiseCollection = client.db("BuyCycle").collection("advertise");
+  const reportCollection = client.db("BuyCycle").collection("report");
 
   const verifySellerAccount = async (req, res, next) => {
     const email = req.query?.email;
@@ -74,8 +75,7 @@ const run = async () => {
   app.get("/users", async (req, res) => {
     const filter = {email:req.query.email};
     const result = await userCollections.findOne(filter);
-    const {role} = result;
-    res.send({role});
+    res.send(result);
   });
 
   // api for getting seller or buyer account from users collection
@@ -160,8 +160,10 @@ const run = async () => {
     verifyToken,
     verifySellerAccount,
     async (req, res) => {
-      const query = { _id: ObjectId(req.query.id) };
-      const result = await productsCollections.deleteOne(query);
+      const id = req.query.id;
+      await bookingsCollections.deleteOne({ productId: id });
+      await advertiseCollection.deleteOne({ productId: id })
+      const result = await productsCollections.deleteOne({ _id: ObjectId(id) });
       res.send(result);
     }
   );
@@ -244,12 +246,18 @@ const run = async () => {
 
   // api for add product to wishlist to uses collection
   app.patch('/wishlist/:id', verifyToken, async(req, res) => {
-    const result = await userCollections.updateOne({ email: req.query.email }, { $push: {wishlist: req.params.id }} );
+    const result = await userCollections.updateOne({ email: req.query.email }, { $addToSet: {wishlist: req.params.id }} );
+    res.send(result);
+  });
+
+  // api for delete product from wishlist of uses collection
+  app.delete('/wishlist/:id', verifyToken, async(req, res) => {
+    const result = await userCollections.updateOne({ email: req.query.email }, { $pull: {wishlist: req.params.id }} );
     res.send(result);
   });
 
   // api for getting wishlist product details 
-  app.get('/wishlist', async(req, res) => {
+  app.get('/wishlist', verifyToken, async(req, res) => {
     const wishlist = await userCollections.aggregate([
       {
         $match: { email: req.query.email },
@@ -287,6 +295,25 @@ const run = async () => {
     ]).toArray()
     res.send(wishlist);
   });
+
+  // api for post a report
+  app.post('/report', verifyToken, async(req, res) => {
+    const result = await reportCollection.insertOne(req.body);
+    res.send(result);
+  });
+
+  // api for getting report information
+  app.get('/report', verifyToken, verifyAdminAccount, async(req, res) => {
+    const report = await reportCollection.find({}).toArray();
+    res.send(report);
+  });
+
+  // api for deleting a report
+  app.delete('/report/:id', verifyToken, verifyAdminAccount, async(req, res) => {
+    const report = await reportCollection.deleteOne({_id: ObjectId(req.params.id)});
+    res.send(report);
+  });
+
 
 };
 
