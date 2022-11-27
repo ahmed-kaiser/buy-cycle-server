@@ -182,7 +182,7 @@ const run = async () => {
       res.send(result);
   });
 
-  // api for getting booking information for seller
+  // api for getting booking information for buyer
   app.get('/bookings', verifyToken, async(req, res) => {
     const result = await bookingsCollections.aggregate([
       {
@@ -218,6 +218,13 @@ const run = async () => {
           pipeline: [{$project: { title: 1, image: 1, selling_price: 1, city: 1, area: 1 }}],
           as: 'productDetails'
         }
+      },
+      {
+        $set: {
+          productDetails: {
+            $arrayElemAt:["$productDetails", 0]
+          }
+        }
       }
     ]).toArray();
     res.send(advertise);
@@ -233,6 +240,52 @@ const run = async () => {
   app.delete('/advertise/:id', verifyToken, verifySellerAccount, async(req, res) => {
     const result = await advertiseCollection.deleteOne({ productId: req.params.id});
     res.send(result);
+  });
+
+  // api for add product to wishlist to uses collection
+  app.patch('/wishlist/:id', verifyToken, async(req, res) => {
+    const result = await userCollections.updateOne({ email: req.query.email }, { $push: {wishlist: req.params.id }} );
+    res.send(result);
+  });
+
+  // api for getting wishlist product details 
+  app.get('/wishlist', async(req, res) => {
+    const wishlist = await userCollections.aggregate([
+      {
+        $match: { email: req.query.email },
+      },
+      {
+        $project: { wishlist: 1, _id: 0}
+      },
+      {
+        $unwind: "$wishlist"
+      },
+      {
+        $set: {pid: {$toObjectId: "$wishlist"}}
+      },
+      {
+        $lookup: {
+          from: 'products',
+          localField: 'pid',
+          foreignField: '_id',
+          as: 'productDetails'
+        }
+      },
+      {
+        $set: {
+          details: {
+            $arrayElemAt:["$productDetails", 0]
+          }
+        }
+      },
+      {
+        $project: {
+          details: 1
+        }
+      }
+      
+    ]).toArray()
+    res.send(wishlist);
   });
 
 };
