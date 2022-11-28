@@ -93,6 +93,20 @@ const run = async () => {
     res.send(result);
   });
 
+  // api for make user admin
+  app.patch("/users-role/:id", verifyToken, verifyAdminAccount, async (req, res) => {
+    const filter = { _id: ObjectId(req.params.id) };
+    const updateDoc = [
+      {
+        $set: {
+          role: "admin",
+        },
+      },
+    ];
+    const result = await userCollections.updateOne(filter, updateDoc);
+    res.send(result);
+  });
+
   // api for getting seller or buyer account from users collection
   app.get("/all-users", verifyToken, verifyAdminAccount, async (req, res) => {
     const filter = { role: req.query.role };
@@ -239,6 +253,12 @@ const run = async () => {
         },
       ])
       .toArray();
+    res.send(result);
+  });
+
+  // api for delete booking
+  app.delete("/bookings/:id", verifyToken, async(req, res) => {
+    const result = await bookingsCollections.deleteOne({ _id: ObjectId(req.params.id) });
     res.send(result);
   });
 
